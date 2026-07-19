@@ -236,7 +236,7 @@ async def on_ready():
         scheduler.add_job(
             check_inactive_users,
             "cron",
-            hour=0,
+            hour=15,
             minute=0,
             id="check_inactive_users",
             replace_existing=True
@@ -247,7 +247,7 @@ async def on_ready():
             send_reaction_ranking,
             "cron",
             day=1,
-            hour=0,
+            hour=15,
             minute=1,
             id="send_reaction_ranking",
             replace_existing=True
