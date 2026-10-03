@@ -352,30 +352,45 @@ async def on_ready():
 
     print(f"로그인 완료 : {client.user}")
 
-    if not scheduler.running:
+    print(
+        f"🔎 스케줄러 현재 상태: "
+        f"running={scheduler.running}"
+    )
 
-        scheduler.add_job(
-            check_inactive_users,
-            "cron",
-            hour=0,
-            minute=0,
-            id="check_inactive_users",
-            replace_existing=True
-        )
+    if scheduler.running:
 
-        scheduler.add_job(
-            send_reaction_ranking,
-            "cron",
-            day=1,
-            hour=0,
-            minute=1,
-            id="send_reaction_ranking",
-            replace_existing=True
-        )
+        print("⚠️ 스케줄러가 이미 실행 중입니다.")
 
-        scheduler.start()
+        return
 
-        print("스케줄러 시작 완료")
+    print("🔧 스케줄러 설정을 시작합니다.")
+
+    scheduler.add_job(
+        check_inactive_users,
+        "cron",
+        hour=0,
+        minute=0,
+        id="check_inactive_users",
+        replace_existing=True
+    )
+
+    print("✅ 미반응자 검사 스케줄 등록 완료")
+
+    scheduler.add_job(
+        send_reaction_ranking,
+        "cron",
+        day=1,
+        hour=0,
+        minute=1,
+        id="send_reaction_ranking",
+        replace_existing=True
+    )
+
+    print("✅ 월간 랭킹 스케줄 등록 완료")
+
+    scheduler.start()
+
+    print("✅ 스케줄러 시작 완료")
 
 
 # =====================================
