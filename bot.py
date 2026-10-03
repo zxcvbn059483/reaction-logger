@@ -21,6 +21,7 @@ KST = ZoneInfo("Asia/Seoul")
 intents = discord.Intents.default()
 intents.guilds = True
 intents.members = True
+intents.reactions = True
 
 client = discord.Client(intents=intents)
 scheduler = AsyncIOScheduler(timezone=KST)
@@ -348,10 +349,11 @@ async def send_reaction_ranking():
 
 @client.event
 async def on_ready():
+
     print(f"로그인 완료 : {client.user}")
 
     if not scheduler.running:
-        # 매일 한국 시간 15:00 미반응자 확인
+
         scheduler.add_job(
             check_inactive_users,
             "cron",
@@ -361,7 +363,6 @@ async def on_ready():
             replace_existing=True
         )
 
-        # 매월 1일 한국 시간 15:01 월간 순위 전송
         scheduler.add_job(
             send_reaction_ranking,
             "cron",
@@ -373,6 +374,8 @@ async def on_ready():
         )
 
         scheduler.start()
+
+        print("스케줄러 시작 완료")
 
 
 # =====================================
