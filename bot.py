@@ -355,7 +355,7 @@ async def on_ready():
         scheduler.add_job(
             check_inactive_users,
             "cron",
-            hour=15,
+            hour=0,
             minute=0,
             id="check_inactive_users",
             replace_existing=True
@@ -366,7 +366,7 @@ async def on_ready():
             send_reaction_ranking,
             "cron",
             day=1,
-            hour=15,
+            hour=0,
             minute=1,
             id="send_reaction_ranking",
             replace_existing=True
@@ -376,108 +376,139 @@ async def on_ready():
 
 
 # =====================================
-# 반응 추가
+# 반응 추가 테스트
 # =====================================
 
 @client.event
 async def on_raw_reaction_add(payload):
+
+    print(
+        f"🔔 반응 감지됨 "
+        f"channel={payload.channel_id}, "
+        f"message={payload.message_id}, "
+        f"user={payload.user_id}"
+    )
+
+    # 감시 채널인지 확인
     if payload.channel_id != TARGET_CHANNEL_ID:
+
+        print(
+            f"❌ 다른 채널의 반응입니다. "
+            f"현재={payload.channel_id}, "
+            f"설정={TARGET_CHANNEL_ID}"
+        )
+
         return
+
+    print("✅ 감시 채널의 반응입니다.")
 
     if payload.guild_id is None:
+
+        print("❌ 서버 반응이 아닙니다.")
+
         return
 
-    guild = client.get_guild(payload.guild_id)
+    guild = client.get_guild(
+        payload.guild_id
+    )
 
     if guild is None:
+
+        print(
+            "❌ 서버를 찾을 수 없습니다."
+        )
+
         return
 
-    member = guild.get_member(payload.user_id)
-    log_channel = client.get_channel(LOG_CHANNEL_ID)
+    member = guild.get_member(
+        payload.user_id
+    )
 
-    if member is None or member.bot:
+    if member is None:
+
+        print(
+            "❌ 사용자를 찾을 수 없습니다."
+        )
+
         return
+
+    if member.bot:
+
+        print(
+            "❌ 봇의 반응입니다."
+        )
+
+        return
+
+    log_channel = client.get_channel(
+        LOG_CHANNEL_ID
+    )
 
     if log_channel is None:
+
+        print(
+            "❌ 로그 채널을 찾을 수 없습니다."
+        )
+
         return
 
+    print(
+        f"✅ 사용자 확인 완료: "
+        f"{member.display_name}"
+    )
+
+    # =================================
+    # 활동 기록 저장
+    # =================================
+
     save_activity(
+
         payload.user_id,
+
         payload.guild_id,
+
         payload.channel_id,
+
         payload.message_id,
+
         payload.emoji
     )
 
+    # =================================
+    # 게시글 링크
+    # =================================
+
     message_url = create_message_url(
+
         payload.guild_id,
+
         payload.channel_id,
+
         payload.message_id
     )
 
+    # =================================
+    # 로그 전송
+    # =================================
+
     await send_long_message(
+
         log_channel,
+
         (
-            f"✅ 반응 추가\n"
-            f"사용자: {member.display_name}\n"
-            f"이모지: {payload.emoji}\n"
-            f"게시글: {message_url}"
+            "✅ 반응 추가\n"
+
+            f"사용자: "
+            f"{member.display_name}\n"
+
+            f"이모지: "
+            f"{payload.emoji}\n"
+
+            f"게시글: "
+            f"{message_url}"
         )
     )
 
-
-# =====================================
-# 반응 제거
-# =====================================
-
-@client.event
-async def on_raw_reaction_remove(payload):
-    if payload.channel_id != TARGET_CHANNEL_ID:
-        return
-
-    if payload.guild_id is None:
-        return
-
-    guild = client.get_guild(payload.guild_id)
-
-    if guild is None:
-        return
-
-    member = guild.get_member(payload.user_id)
-    log_channel = client.get_channel(LOG_CHANNEL_ID)
-
-    if member is None or member.bot:
-        return
-
-    if log_channel is None:
-        return
-
-    message_url = create_message_url(
-        payload.guild_id,
-        payload.channel_id,
-        payload.message_id
+    print(
+        "✅ 반응 로그 전송 완료"
     )
-
-    await send_long_message(
-        log_channel,
-        (
-            f"❌ 반응 제거\n"
-            f"사용자: {member.display_name}\n"
-            f"이모지: {payload.emoji}\n"
-            f"게시글: {message_url}"
-        )
-    )
-
-
-# =====================================
-# 봇 시작
-# =====================================
-
-if not TOKEN:
-    raise RuntimeError(
-        "TOKEN 환경 변수가 설정되지 않았습니다. "
-        "Railway Variables를 확인해주세요."
-    )
-
-client.run(TOKEN)
-
