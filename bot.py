@@ -347,8 +347,11 @@ async def send_reaction_ranking():
 @client.event
 async def on_ready():
     print(f"로그인 완료 : {client.user}")
+    print(f"스케줄러 현재 상태: {scheduler.running}")
 
     if not scheduler.running:
+        print("스케줄러 작업 등록 시작")
+
         scheduler.add_job(
             check_inactive_users,
             "cron",
@@ -357,6 +360,8 @@ async def on_ready():
             id="check_inactive_users",
             replace_existing=True
         )
+
+        print("일일 미반응자 작업 등록 완료")
 
         scheduler.add_job(
             send_reaction_ranking,
@@ -368,9 +373,14 @@ async def on_ready():
             replace_existing=True
         )
 
+        print("월간 TOP10 작업 등록 완료")
+
         scheduler.start()
 
         print("스케줄러 시작 완료")
+
+    else:
+        print("스케줄러가 이미 실행 중입니다.")
 
 # =====================================
 # 반응 추가
