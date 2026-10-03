@@ -1,27 +1,62 @@
+
 import discord
 import json
 import os
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+# =====================================
+# 기본 설정
+# =====================================
 
 TOKEN = os.getenv("TOKEN")
 
 TARGET_CHANNEL_ID = 1375102819673313380
 LOG_CHANNEL_ID = 1515550120727543919
 
+# 한국 시간대
+KST = ZoneInfo("Asia/Seoul")
+
 intents = discord.Intents.default()
 intents.guilds = True
 intents.members = True
 
 client = discord.Client(intents=intents)
-scheduler = AsyncIOScheduler()
+scheduler = AsyncIOScheduler(timezone=KST)
 
+
+# =====================================
+# 시간 관련 함수
+# =====================================
+
+def now_kst():
+    return datetime.now(KST)
+
+
+def parse_datetime(value):
+    """기존 데이터와 새 시간 데이터를 모두 처리합니다."""
+    dt = datetime.fromisoformat(value)
+
+    # 기존에 저장된 시간대 없는 데이터는 한국 시간으로 간주
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=KST)
+
+    return dt.astimezone(KST)
+
+
+# =====================================
+# JSON 데이터 관리
+# =====================================
 
 def load_data():
     try:
         with open("user_activity.json", "r", encoding="utf-8") as f:
             return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
+    except FileNotFoundError:
+        return {}
+    except json.JSONDecodeError:
+        print("user_activity.json 파일의 형식이 올바르지 않습니다.")
         return {}
 
 
@@ -30,15 +65,59 @@ def save_data(data):
         json.dump(data, f, ensure_ascii=False, indent=4)
 
 
+# =====================================
+# 게시글 링크 생성
+# =====================================
+
+def create_message_url(guild_id, channel_id, message_id):
+    return (
+        f"https://discord.com/channels/"
+        f"{guild_id}/{channel_id}/{message_id}"
+    )
+
+
+# =====================================
+# 긴 메시지 나누어 전송
+# =====================================
+
+async def send_long_message(channel, message):
+    """디스코드 메시지 길이 제한에 맞춰 나누어 보냅니다."""
+    max_length = 1900
+    parts = []
+    current = ""
+
+    for line in message.split("\n"):
+        if len(current) + len(line) + 1 > max_length:
+            if current:
+                parts.append(current)
+            current = line
+        else:
+            if current:
+                current += "\n" + line
+            else:
+                current = line
+
+    if current:
+        parts.append(current)
+
+    for part in parts:
+        await channel.send(part)
+
+
+# =====================================
+# 반응 활동 저장
+# =====================================
+
 def save_activity(user_id, guild_id, channel_id, message_id, emoji):
     data = load_data()
     user_id = str(user_id)
 
-    now = datetime.now().isoformat()
+    now = now_kst().isoformat()
 
-    message_url = (
-        f"https://discord.com/channels/"
-        f"{guild_id}/{channel_id}/{message_id}"
+    message_url = create_message_url(
+        guild_id,
+        channel_id,
+        message_id
     )
 
     if user_id not in data:
@@ -52,10 +131,10 @@ def save_activity(user_id, guild_id, channel_id, message_id, emoji):
         }
 
     else:
-        # 예전 형식 데이터가 문자열로 저장되어 있을 경우 자동 변환
         if isinstance(data[user_id], str):
+            old_activity = data[user_id]
             data[user_id] = {
-                "last_activity": data[user_id],
+                "last_activity": old_activity,
                 "reaction_count": 0
             }
 
@@ -73,6 +152,10 @@ def save_activity(user_id, guild_id, channel_id, message_id, emoji):
     save_data(data)
 
 
+# =====================================
+# 미반응자 확인
+# =====================================
+
 async def check_inactive_users():
     target_channel = client.get_channel(TARGET_CHANNEL_ID)
     log_channel = client.get_channel(LOG_CHANNEL_ID)
@@ -86,74 +169,106 @@ async def check_inactive_users():
         return
 
     guild = target_channel.guild
-
     data = load_data()
-    inactive_users = []
+
+    # 12~13일 미반응자
+    inactive_12_users = []
+
+    # 14일 이상 미반응자
+    inactive_14_users = []
+
+    current_time = now_kst()
 
     for member in guild.members:
-        # 봇은 검사하지 않음
+        # 봇 제외
         if member.bot:
             continue
 
-        # @everyone 역할만 가진 사람만 검사
+        # @everyone 역할만 가진 사람만 확인
         if len(member.roles) > 1:
             continue
 
         user_id = str(member.id)
 
-        # 반응 기록이 한 번도 없는 사람은 표시하지 않음
+        # 반응 기록이 없는 사람 제외
         if user_id not in data:
             continue
 
         user_data = data[user_id]
 
-        # 예전 형식 데이터 대응
+        # 예전 형식의 데이터도 처리
         if isinstance(user_data, str):
-            last_activity = datetime.fromisoformat(user_data)
+            last_activity = parse_datetime(user_data)
+            last_emoji = "기록 없음"
+            last_message_url = "기록 없음"
         else:
-            last_activity = datetime.fromisoformat(
+            if "last_activity" not in user_data:
+                continue
+
+            last_activity = parse_datetime(
                 user_data["last_activity"]
             )
 
-        days = (datetime.now() - last_activity).days
+            last_emoji = user_data.get(
+                "last_emoji",
+                "기록 없음"
+            )
 
-        # 14일 이상 반응이 없는 사람만 추가
-        if days >= 14:
-            if isinstance(user_data, dict):
-                last_emoji = user_data.get(
-                    "last_emoji",
-                    "기록 없음"
-                )
+            last_message_url = user_data.get(
+                "last_message_url",
+                "기록 없음"
+            )
 
-                last_message_url = user_data.get(
-                    "last_message_url",
-                    "기록 없음"
-                )
+        days = (current_time - last_activity).days
 
-                inactive_users.append(
-                    f"{member.display_name} ({days}일)\n"
-                    f"마지막 이모지: {last_emoji}\n"
-                    f"마지막으로 반응한 글: {last_message_url}\n"
-                )
+        user_info = (
+            f"{member.display_name} ({days}일)\n"
+            f"마지막 이모지: {last_emoji}\n"
+            f"마지막으로 반응한 글: {last_message_url}\n"
+        )
 
-            else:
-                inactive_users.append(
-                    f"{member.display_name} ({days}일)\n"
-                    f"마지막 이모지: 기록 없음\n"
-                    f"마지막으로 반응한 글: 기록 없음\n"
-                )
+        # 12~13일 미반응
+        if 12 <= days < 14:
+            inactive_12_users.append(user_info)
 
-    if inactive_users:
-        msg = "📢 역할 없는 14일 이상 미반응자\n\n"
-        msg += "\n".join(inactive_users)
+        # 14일 이상 미반응
+        elif days >= 14:
+            inactive_14_users.append(user_info)
+
+    # 12~13일 미반응자 메시지
+    if inactive_12_users:
+        msg_12 = (
+            "📢 역할 없는 12일 이상 미반응자\n\n"
+            + "\n".join(inactive_12_users)
+        )
     else:
-        msg = (
+        msg_12 = (
+            "📢 역할 없는 12일 이상 미반응자\n\n"
+            "없음"
+        )
+
+    await send_long_message(log_channel, msg_12)
+
+    # 14일 이상 미반응자 메시지
+    if inactive_14_users:
+        msg_14 = (
+            "📢 역할 없는 14일 이상 미반응자\n\n"
+            + "\n".join(inactive_14_users)
+        )
+    else:
+        msg_14 = (
             "📢 역할 없는 14일 이상 미반응자\n\n"
             "없음"
         )
 
-    await log_channel.send(msg)
+    await send_long_message(log_channel, msg_14)
 
+    print("미반응자 확인 완료")
+
+
+# =====================================
+# 월간 반응 TOP 10
+# =====================================
 
 async def send_reaction_ranking():
     target_channel = client.get_channel(TARGET_CHANNEL_ID)
@@ -168,8 +283,8 @@ async def send_reaction_ranking():
         return
 
     guild = target_channel.guild
-
     data = load_data()
+
     ranking = []
 
     for user_id, info in data.items():
@@ -192,7 +307,8 @@ async def send_reaction_ranking():
         reverse=True
     )
 
-    current = datetime.now()
+    # 지난달 연도와 월 계산
+    current = now_kst()
     target_month = current.month - 1
     target_year = current.year
 
@@ -214,25 +330,28 @@ async def send_reaction_ranking():
     else:
         msg += "기록 없음"
 
-    await log_channel.send(msg)
+    await send_long_message(log_channel, msg)
 
-    # 월간 반응 횟수만 초기화
-    # 마지막 반응 시간과 메시지 링크는 유지
+    # 반응 횟수 초기화
     for user_id in data:
         if isinstance(data[user_id], dict):
             data[user_id]["reaction_count"] = 0
 
     save_data(data)
 
+    print("월간 반응 순위 전송 및 초기화 완료")
+
+
+# =====================================
+# 봇 실행 준비
+# =====================================
 
 @client.event
 async def on_ready():
     print(f"로그인 완료 : {client.user}")
 
-    # 봇이 재연결됐을 때 스케줄러가 중복 실행되는 것을 방지
     if not scheduler.running:
-
-        # 매일 00:00 미반응자 검사
+        # 매일 한국 시간 15:00 미반응자 확인
         scheduler.add_job(
             check_inactive_users,
             "cron",
@@ -242,7 +361,7 @@ async def on_ready():
             replace_existing=True
         )
 
-        # 매월 1일 00:01 월간 TOP10 출력
+        # 매월 1일 한국 시간 15:01 월간 순위 전송
         scheduler.add_job(
             send_reaction_ranking,
             "cron",
@@ -256,10 +375,16 @@ async def on_ready():
         scheduler.start()
 
 
+# =====================================
+# 반응 추가
+# =====================================
+
 @client.event
 async def on_raw_reaction_add(payload):
-    # 지정된 채널의 반응만 기록
     if payload.channel_id != TARGET_CHANNEL_ID:
+        return
+
+    if payload.guild_id is None:
         return
 
     guild = client.get_guild(payload.guild_id)
@@ -270,17 +395,12 @@ async def on_raw_reaction_add(payload):
     member = guild.get_member(payload.user_id)
     log_channel = client.get_channel(LOG_CHANNEL_ID)
 
-    if member is None:
-        return
-
-    # 봇이 누른 반응은 기록하지 않음
-    if member.bot:
+    if member is None or member.bot:
         return
 
     if log_channel is None:
         return
 
-    # 마지막 반응 시간, 이모지, 메시지 링크 저장
     save_activity(
         payload.user_id,
         payload.guild_id,
@@ -289,18 +409,33 @@ async def on_raw_reaction_add(payload):
         payload.emoji
     )
 
-    # 평소 반응 추가 메시지에는 링크를 표시하지 않음
-    await log_channel.send(
-        f"✅ 반응 추가\n"
-        f"사용자: {member.display_name}\n"
-        f"이모지: {payload.emoji}"
+    message_url = create_message_url(
+        payload.guild_id,
+        payload.channel_id,
+        payload.message_id
+    )
+
+    await send_long_message(
+        log_channel,
+        (
+            f"✅ 반응 추가\n"
+            f"사용자: {member.display_name}\n"
+            f"이모지: {payload.emoji}\n"
+            f"게시글: {message_url}"
+        )
     )
 
 
+# =====================================
+# 반응 제거
+# =====================================
+
 @client.event
 async def on_raw_reaction_remove(payload):
-    # 지정된 채널의 반응만 기록
     if payload.channel_id != TARGET_CHANNEL_ID:
+        return
+
+    if payload.guild_id is None:
         return
 
     guild = client.get_guild(payload.guild_id)
@@ -311,20 +446,38 @@ async def on_raw_reaction_remove(payload):
     member = guild.get_member(payload.user_id)
     log_channel = client.get_channel(LOG_CHANNEL_ID)
 
-    if member is None:
-        return
-
-    if member.bot:
+    if member is None or member.bot:
         return
 
     if log_channel is None:
         return
 
-    await log_channel.send(
-        f"❌ 반응 제거\n"
-        f"사용자: {member.display_name}\n"
-        f"이모지: {payload.emoji}"
+    message_url = create_message_url(
+        payload.guild_id,
+        payload.channel_id,
+        payload.message_id
+    )
+
+    await send_long_message(
+        log_channel,
+        (
+            f"❌ 반응 제거\n"
+            f"사용자: {member.display_name}\n"
+            f"이모지: {payload.emoji}\n"
+            f"게시글: {message_url}"
+        )
     )
 
 
+# =====================================
+# 봇 시작
+# =====================================
+
+if not TOKEN:
+    raise RuntimeError(
+        "TOKEN 환경 변수가 설정되지 않았습니다. "
+        "Railway Variables를 확인해주세요."
+    )
+
 client.run(TOKEN)
+
